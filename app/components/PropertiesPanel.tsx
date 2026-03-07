@@ -21,6 +21,9 @@ interface PropertiesPanelProps {
   selectedNode: CanvasNode | null;
   /** Força a exibição das propriedades de um nó específico, ignorando o nó selecionado no canvas. Útil para o modal. */
   forceNode?: CanvasNode | null;
+  focusNodeId?: string | null;
+  onFocusNode?: (nodeId: string) => void;
+  onClearFocus?: () => void;
   onLabelChange?: (nodeId: string, label: string) => void;
   onColorChange?: (nodeId: string, color: string) => void;
   onAutoScaleChange?: (nodeId: string, enabled: boolean) => void;
@@ -34,6 +37,9 @@ interface PropertiesPanelProps {
 export function PropertiesPanel({
   selectedNode: selectedNodeFromCanvas,
   forceNode,
+  focusNodeId = null,
+  onFocusNode,
+  onClearFocus,
   onLabelChange,
   onColorChange,
   onAutoScaleChange,
@@ -51,10 +57,25 @@ export function PropertiesPanel({
         <div className="p-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
           <h3 className="font-bold text-sm">Propriedades</h3>
         </div>
-        <div className="flex-1 flex items-center justify-center p-8 text-center">
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Selecione um nó no canvas para editar suas propriedades
-          </p>
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+          {focusNodeId && onClearFocus ? (
+            <>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+                Visualização focada em um nó
+              </p>
+              <button
+                type="button"
+                onClick={onClearFocus}
+                className="text-sm px-3 py-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 font-medium"
+              >
+                Mostrar tudo
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Selecione um nó no canvas para editar suas propriedades
+            </p>
+          )}
         </div>
       </aside>
     );
@@ -149,6 +170,28 @@ export function PropertiesPanel({
         </span>
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {onFocusNode && onClearFocus && (
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">Visualização</label>
+            {focusNodeId === selectedNode.id ? (
+              <button
+                type="button"
+                onClick={onClearFocus}
+                className="w-full py-2 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 text-sm font-medium transition-colors"
+              >
+                Mostrar tudo
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onFocusNode(selectedNode.id)}
+                className="w-full py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 text-sm font-medium transition-colors"
+              >
+                Focar neste nó
+              </button>
+            )}
+          </div>
+        )}
         <div className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-slate-500 uppercase">Rótulo</label>

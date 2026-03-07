@@ -89,21 +89,26 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 const SUGGESTIONS = [
-  "Crie uma topologia de rede corporativa com firewall, switches e servidores redundantes",
+  "Crie uma arquitetura de API com gateway, auth, usuários, pedidos, notificações e múltiplas conexões por serviço",
   "Monte um data center com DMZ, conexões bidirecionais e alta disponibilidade",
-  "Desenhe uma rede de empresa com 2 filiais conectadas por VPN",
-  "Crie uma topologia em estrela com um switch core e 6 dispositivos",
+  "Desenhe um fluxograma completo de aprovação de pedido com decisões, subprocessos e documentos",
+  "Crie uma topologia em estrela com um switch core e 6 dispositivos com várias conexões",
 ];
 
 const GENERATION_STATUS_PHRASES = [
   "Pensando...",
   "Analisando seu pedido...",
+  "Pode demorar um pouco em diagramas complexos.",
   "Criando fluxos...",
-  "Montando infraestrutura...",
+  "Montando nós e conexões...",
   "Desenhando nós e conexões...",
+  "Posicionando elementos...",
+  "Aplicando cores e estilos...",
   "Organizando o layout...",
+  "Definindo as arestas...",
   "Quase lá...",
   "Finalizando o diagrama...",
+  "Preparando a resposta...",
 ];
 
 /** Snapshot do canvas atual para a IA editar / adicionar links (envia nós e edges no request). */
@@ -147,7 +152,7 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
     }
     const interval = setInterval(() => {
       setStatusPhraseIndex((i) => (i + 1) % GENERATION_STATUS_PHRASES.length);
-    }, 2200);
+    }, 1600);
     return () => clearInterval(interval);
   }, [loading]);
 
@@ -259,6 +264,14 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
           { role: "assistant", content: fullContent },
         ]);
         setStreamingContent("");
+        const diagram = extractDiagramJSON(fullContent);
+        if (diagram) {
+          const userAskedClear = /\b(limpar|limpe|apagar tudo|esvaziar|clear)\s*(o canvas|o diagrama)?/i.test(userContent);
+          const userAskedReplace =
+            (/\b(substituir|substitua|trocar|substitua o|substituir o)\s*(fluxograma|canvas|diagrama|atual)?/i.test(userContent) || userAskedClear) &&
+            !/\b(adicione|adicionar|inclua|incluir|coloque|adicione um|adicionar um|inclua um|colocar um)\b/i.test(userContent);
+          onApplyDiagram(diagram, userAskedReplace ? "replace" : "append");
+        }
       } catch (error) {
         setMessages((prev) => [
           ...prev,
@@ -272,7 +285,7 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
         setLoading(false);
       }
     },
-    [input, loading, messages, viewMode, currentDiagram, attachments]
+    [input, loading, messages, viewMode, currentDiagram, attachments, onApplyDiagram]
   );
 
   const handleKeyDown = useCallback(
@@ -321,7 +334,7 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
           )}
           {diagram && (
             <div className="mt-2.5 pt-2.5 border-t border-slate-600/50">
-              <div className="text-xs text-slate-400 mb-2">
+              <div className="text-xs text-slate-400">
                 {diagram.viewMode && (
                   <span className="inline-block px-1.5 py-0.5 rounded bg-primary/20 text-primary font-semibold mr-1.5">
                     {diagram.viewMode === "physical" ? "Físico" : "Lógico"}
@@ -329,21 +342,7 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
                 )}
                 {diagram.nodes.length} nó(s)
                 {diagram.texts?.length ? ` · ${diagram.texts.length} texto(s)` : ""}
-                {" "}&middot; {diagram.edges.length} conexão(ões)
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => onApplyDiagram(diagram, "replace")}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary/90 hover:bg-primary text-white transition-colors cursor-pointer"
-                >
-                  Substituir canvas
-                </button>
-                <button
-                  onClick={() => onApplyDiagram(diagram, "append")}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors cursor-pointer"
-                >
-                  Adicionar ao canvas
-                </button>
+                {" "}&middot; {diagram.edges.length} conexão(ões) — aplicado
               </div>
             </div>
           )}
@@ -357,9 +356,12 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
     const phrase = GENERATION_STATUS_PHRASES[statusPhraseIndex] ?? GENERATION_STATUS_PHRASES[0];
     return (
       <div className="flex justify-start">
-        <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed bg-slate-800/80 text-slate-200 border border-slate-700/50 flex items-center gap-2.5">
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
-          <span className="animate-pulse">{phrase}</span>
+        <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed bg-slate-800/80 text-slate-200 border border-slate-700/50 flex flex-col gap-1">
+          <div className="flex items-center gap-2.5">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+            <span className="animate-pulse">{phrase}</span>
+          </div>
+          <p className="text-[11px] text-slate-400 pl-6">Diagramas complexos podem levar alguns segundos.</p>
         </div>
       </div>
     );

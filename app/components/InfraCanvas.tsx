@@ -50,6 +50,8 @@ const edgeTypes = { default: DirectionalEdge, bidirectional: DirectionalEdge };
 function FlowWithDrop({
   initialNodes,
   initialEdges,
+  displayedNodes,
+  displayedEdges,
   viewMode,
   onViewModeChange,
   viewport,
@@ -66,6 +68,8 @@ function FlowWithDrop({
 }: {
   initialNodes: CanvasNode[];
   initialEdges: Edge[];
+  displayedNodes: CanvasNode[];
+  displayedEdges: Edge[];
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   viewport: Viewport;
@@ -121,11 +125,12 @@ function FlowWithDrop({
     const onWheel = (e: WheelEvent) => {
       if (!e.shiftKey) return;
       e.preventDefault();
+      e.stopPropagation();
       const vp = getViewport();
       onViewportChange({ ...vp, x: vp.x + e.deltaY });
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener("wheel", onWheel, { capture: true });
   }, [getViewport, onViewportChange]);
 
   const width = useStore((s) => s.width) ?? 800;
@@ -236,8 +241,8 @@ function FlowWithDrop({
       onDragOver={onDragOver}
     >
       <ReactFlow
-        nodes={initialNodes}
-        edges={initialEdges}
+        nodes={displayedNodes}
+        edges={displayedEdges}
         viewport={viewport}
         onViewportChange={onViewportChange}
         onNodesChange={onNodesChange}
@@ -303,6 +308,16 @@ const defaultViewport: Viewport = { x: 0, y: 0, zoom: 1 };
 
 const SNAP_ALIGN_THRESHOLD = 25;
 
+/** Retorna os IDs dos nós que devem ser exibidos: o nó focado e todos ligados a ele por arestas. */
+function getConnectedNodeIds(nodeId: string, edges: Edge[]): Set<string> {
+  const ids = new Set<string>([nodeId]);
+  for (const e of edges) {
+    if (e.source === nodeId) ids.add(e.target);
+    if (e.target === nodeId) ids.add(e.source);
+  }
+  return ids;
+}
+
 function getSnappedPosition(
   movedPos: { x: number; y: number },
   otherNodes: { position: { x: number; y: number } }[],
@@ -330,6 +345,60 @@ function getSnappedPosition(
   };
 }
 
+const MIN_NODE_GAP = 24;
+
+function getNodeBBox(node: CanvasNode): { x: number; y: number; w: number; h: number } {
+  const x = node.position.x;
+  const y = node.position.y;
+  const data = node.data as Record<string, unknown>;
+  let w = 160;
+  let h = 90;
+  if (node.type === "text") {
+    w = (data.width as number) ?? 200;
+    h = (data.height as number) ?? 80;
+  } else if (node.type === "infra") {
+    w = (data.width as number) ?? 140;
+    h = (data.height as number) ?? 100;
+  } else {
+    w = (data.width as number) ?? 200;
+    h = (data.height as number) ?? 90;
+  }
+  return { x, y, w, h };
+}
+
+function spreadNodesToAvoidOverlap(nodes: CanvasNode[]): CanvasNode[] {
+  const result = nodes.map((n) => ({ ...n, position: { ...n.position } }));
+  const gap = MIN_NODE_GAP;
+  const maxPasses = 5;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    let moved = false;
+    for (let j = 0; j < result.length; j++) {
+      for (let i = 0; i < j; i++) {
+        const bi = getNodeBBox(result[i]!);
+        const bj = getNodeBBox(result[j]!);
+        const overlapX = Math.min(bi.x + bi.w, bj.x + bj.w) - Math.max(bi.x, bj.x);
+        const overlapY = Math.min(bi.y + bi.h, bj.y + bj.h) - Math.max(bi.y, bj.y);
+        if (overlapX > 0 && overlapY > 0) {
+          const ci = { x: bi.x + bi.w / 2, y: bi.y + bi.h / 2 };
+          const cj = { x: bj.x + bj.w / 2, y: bj.y + bj.h / 2 };
+          const shiftX = (cj.x >= ci.x ? 1 : -1) * (overlapX + gap);
+          const shiftY = (cj.y >= ci.y ? 1 : -1) * (overlapY + gap);
+          result[j] = {
+            ...result[j]!,
+            position: {
+              x: result[j]!.position.x + shiftX,
+              y: result[j]!.position.y + shiftY,
+            },
+          };
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return result;
+}
+
 type HistoryEntry = {
   nodes: CanvasNode[];
   edges: Edge[];
@@ -353,6 +422,7 @@ export function InfraCanvas() {
   const [modalNodeId, setModalNodeId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("Novo Projeto");
   const [logicalContentByNodeId, setLogicalContentByNodeId] = useState<Record<string, { nodes: CanvasNode[]; edges: Edge[] }>>({});
+  const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
 
   const handleLoadProject = useCallback((data: ProjectData) => {
     setProjectName(data.name);
@@ -369,6 +439,7 @@ export function InfraCanvas() {
     setLogicalHistoryIndex(0);
     setSelectedNode(null);
     setSelectedEdge(null);
+    setFocusNodeId(null);
   }, [setPhysicalNodes, setPhysicalEdges, setLogicalNodes, setLogicalEdges]);
 
   const handleSaveInnerFlow = useCallback((nodeId: string, nodes: CanvasNode[], edges: Edge[]) => {
@@ -474,6 +545,27 @@ export function InfraCanvas() {
   const nodes = viewMode === "physical" ? physicalNodes : logicalNodes;
   const edges = viewMode === "physical" ? physicalEdges : logicalEdges;
 
+  const FOCUS_DIMMED_OPACITY = 0.25;
+
+  const { displayNodes, displayEdges } = useMemo(() => {
+    if (!focusNodeId) return { displayNodes: nodes, displayEdges: edges };
+    const visibleIds = getConnectedNodeIds(focusNodeId, edges);
+    return {
+      displayNodes: nodes.map((n) =>
+        visibleIds.has(n.id)
+          ? n
+          : { ...n, style: { ...n.style, opacity: FOCUS_DIMMED_OPACITY } }
+      ),
+      displayEdges: edges.map((e) => {
+        const inFocus =
+          visibleIds.has(e.source) && visibleIds.has(e.target);
+        return inFocus
+          ? e
+          : { ...e, style: { ...e.style, opacity: FOCUS_DIMMED_OPACITY } };
+      }),
+    };
+  }, [focusNodeId, nodes, edges]);
+
   const currentDiagram = useMemo((): CurrentDiagramSnapshot => ({
     nodes: nodes.map((n) => ({
       id: n.id,
@@ -567,8 +659,17 @@ export function InfraCanvas() {
       if (selectedEdges.length > 0) {
         setSelectedEdge(selectedEdges[0]);
         setSelectedNode(null);
+        setFocusNodeId(null);
       } else if (selectedNodes.length > 0) {
         setSelectedEdge(null);
+        const node = selectedNodes[0]!;
+        if (node.type !== "text") {
+          setFocusNodeId(node.id);
+        } else {
+          setFocusNodeId(null);
+        }
+      } else {
+        setFocusNodeId(null);
       }
     },
     []
@@ -800,9 +901,10 @@ export function InfraCanvas() {
 
       if (mode === "replace") {
         const newNodes = [...diagramNodes, ...textNodes];
-        targetSetNodes(newNodes);
+        const spread = spreadNodesToAvoidOverlap(newNodes);
+        targetSetNodes(spread);
         targetSetEdges(newEdges);
-        pushToHistory(newNodes, newEdges);
+        pushToHistory(spread, newEdges);
       } else {
         const mergedNodes = [...currentNodes];
         for (const n of diagramNodes) {
@@ -824,9 +926,10 @@ export function InfraCanvas() {
             mergedEdges.push(e);
           }
         }
-        targetSetNodes(mergedNodes);
+        const spreadMerged = spreadNodesToAvoidOverlap(mergedNodes);
+        targetSetNodes(spreadMerged);
         targetSetEdges(mergedEdges);
-        pushToHistory(mergedNodes, mergedEdges);
+        pushToHistory(spreadMerged, mergedEdges);
       }
 
       if (targetMode === "physical" && data.innerFlows?.length) {
@@ -923,6 +1026,8 @@ export function InfraCanvas() {
             <FlowWithDrop
               initialNodes={nodes}
               initialEdges={edges}
+              displayedNodes={displayNodes}
+              displayedEdges={displayEdges}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               viewport={viewport}
@@ -941,25 +1046,30 @@ export function InfraCanvas() {
           <AIPanel viewMode={viewMode} onApplyDiagram={handleApplyDiagram} currentDiagram={currentDiagram} />
           <ShortcutTips />
         </main>
-        {selectedEdge ? (
-          <ConnectionPanel
-            selectedEdge={selectedEdge}
-            nodes={nodes}
-            onDirectionChange={handleEdgeDirectionChange}
-            onRemove={handleRemoveEdge}
-          />
-        ) : (
-          <PropertiesPanel
-            selectedNode={selectedNode}
-            onLabelChange={handleLabelChange}
-            onColorChange={handleColorChange}
-            onRemove={handleRemoveNode}
-            onAutoScaleChange={handleAutoScaleChange}
-            onNodeSizeChange={handleNodeSizeChange}
-            onTextContentChange={handleTextContentChange}
-            onIframeUrlChange={handleIframeUrlChange}
-          />
-        )}
+        <div key={selectedEdge ? "connection-panel" : "properties-panel"} className="contents">
+          {selectedEdge ? (
+            <ConnectionPanel
+              selectedEdge={selectedEdge}
+              nodes={nodes}
+              onDirectionChange={handleEdgeDirectionChange}
+              onRemove={handleRemoveEdge}
+            />
+          ) : (
+            <PropertiesPanel
+              selectedNode={selectedNode}
+              focusNodeId={focusNodeId}
+              onFocusNode={setFocusNodeId}
+              onClearFocus={() => setFocusNodeId(null)}
+              onLabelChange={handleLabelChange}
+              onColorChange={handleColorChange}
+              onRemove={handleRemoveNode}
+              onAutoScaleChange={handleAutoScaleChange}
+              onNodeSizeChange={handleNodeSizeChange}
+              onTextContentChange={handleTextContentChange}
+              onIframeUrlChange={handleIframeUrlChange}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

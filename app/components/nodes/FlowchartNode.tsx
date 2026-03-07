@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useCallback } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
 export const DEFAULT_FC_COLOR = "#6366f1";
@@ -97,21 +97,58 @@ function ShapeSVG({ shape, w, h, color, selected }: {
   }
 }
 
+const LABEL_PX_PER_CHAR = 8;
+const MIN_WIDTH_FROM_LABEL = 160;
+const MAX_AUTO_WIDTH = 320;
+const MIN_ASPECT = 1.4;
+const MAX_ASPECT = 2.8;
+const LABEL_PADDING_X = 32;
+const LINE_HEIGHT = 20;
+const LABEL_PADDING_Y = 24;
+
 function FlowchartNodeComponent({ data, selected }: NodeProps<FlowchartNodeType>) {
   const shape = data.nodeTypeId || "fc-process";
   const label = data.label ?? "Processo";
   const color = data.color ?? DEFAULT_FC_COLOR;
   const defaults = DEFAULT_SIZES[shape] || { w: 160, h: 80 };
-  const w = typeof data.width === "number" ? data.width : defaults.w;
-  const h = typeof data.height === "number" ? data.height : defaults.h;
+  const baseW = typeof data.width === "number" ? data.width : defaults.w;
+  const baseH = typeof data.height === "number" ? data.height : defaults.h;
+  const minWFromLabel = Math.min(MAX_AUTO_WIDTH, Math.max(MIN_WIDTH_FROM_LABEL, label.length * LABEL_PX_PER_CHAR));
+  let w = Math.max(baseW, minWFromLabel);
+  let h = baseH;
+  const contentW = Math.max(1, w - LABEL_PADDING_X);
+  const charsPerLine = Math.floor(contentW / LABEL_PX_PER_CHAR);
+  const estimatedLines = Math.max(1, Math.ceil(label.length / charsPerLine));
+  const minHFromLines = estimatedLines * LINE_HEIGHT + LABEL_PADDING_Y;
+  h = Math.max(h, minHFromLines, defaults.h);
+  const aspect = w / h;
+  if (aspect > MAX_ASPECT) {
+    h = Math.max(h, Math.ceil(w / MAX_ASPECT));
+  } else if (aspect < MIN_ASPECT) {
+    w = Math.max(w, Math.ceil(h * MIN_ASPECT));
+  }
   const rgb = hexToRgb(color);
 
   const [editing, setEditing] = useState(false);
+  const editRef = useRef<HTMLTextAreaElement>(null);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setEditing(true);
   }, []);
+
+  const adjustEditHeight = useCallback(() => {
+    const el = editRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 24)}px`;
+  }, []);
+
+  useEffect(() => {
+    if (!editing) return;
+    const t = setTimeout(adjustEditHeight, 0);
+    return () => clearTimeout(t);
+  }, [editing, label, adjustEditHeight]);
 
   return (
     <div
@@ -119,7 +156,9 @@ function FlowchartNodeComponent({ data, selected }: NodeProps<FlowchartNodeType>
       style={{
         width: `${w}px`,
         height: `${h}px`,
-        filter: selected ? `drop-shadow(0 0 10px rgba(${rgb}, 0.35))` : undefined,
+        filter: selected
+          ? `drop-shadow(0 0 12px rgba(${rgb}, 0.5)) drop-shadow(0 0 24px rgba(${rgb}, 0.25))`
+          : `drop-shadow(0 0 10px rgba(${rgb}, 0.35)) drop-shadow(0 0 20px rgba(${rgb}, 0.18))`,
       }}
       onDoubleClick={handleDoubleClick}
     >
@@ -137,12 +176,15 @@ function FlowchartNodeComponent({ data, selected }: NodeProps<FlowchartNodeType>
       <Handle id="right" type="source" position={Position.Right} className="!border-2 !pointer-events-auto" style={{ borderColor: color }} />
       <Handle id="bottom" type="source" position={Position.Bottom} className="!border-2 !pointer-events-auto" style={{ borderColor: color }} />
 
-      <div className="absolute inset-0 flex items-center justify-center px-4 pointer-events-none">
+      <div className="absolute inset-0 flex items-center justify-center px-4 py-2 pointer-events-none box-border" style={{ width: "100%", height: "100%" }}>
         {editing ? (
-          <input
+          <textarea
+            ref={editRef}
             autoFocus
-            className="nodrag nopan bg-transparent text-center text-sm font-medium text-[var(--foreground)] outline-none border-b border-white/30 pointer-events-auto w-full"
+            rows={1}
+            className="nodrag nopan bg-transparent text-center text-sm font-medium text-[var(--foreground)] outline-none border-b border-white/30 pointer-events-auto w-full resize-none overflow-hidden py-0 min-h-[24px]"
             defaultValue={label}
+            onInput={adjustEditHeight}
             onBlur={(e) => {
               setEditing(false);
               const newLabel = e.target.value.trim();
@@ -154,14 +196,22 @@ function FlowchartNodeComponent({ data, selected }: NodeProps<FlowchartNodeType>
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Enter") (e.target as HTMLTextAreaElement).blur();
               if (e.key === "Escape") { setEditing(false); }
             }}
           />
         ) : (
           <span
-            className="text-center text-sm font-medium text-[var(--foreground)] select-none"
-            style={{ textShadow: "0 1px 2px rgba(0,0,0,0.5)" }}
+            className="text-center text-sm font-medium text-[var(--foreground)] select-none block w-full overflow-hidden"
+            style={{
+              textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+              wordBreak: "break-word",
+              overflowWrap: "break-word",
+              whiteSpace: "normal",
+              lineHeight: 1.35,
+              maxWidth: "100%",
+              display: "block",
+            }}
           >
             {label}
           </span>

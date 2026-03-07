@@ -40,13 +40,18 @@ function InfraNodeComponent({ data, selected }: NodeProps<InfraNodeType>) {
   const color = data.color ?? DEFAULT_NODE_COLOR;
   const opacity = typeof data.opacity === "number" ? data.opacity / 100 : 1;
   const rgb = hexToRgb(color);
-  const borderStyle = { borderColor: color, boxShadow: selected ? `0 0 15px rgba(${rgb}, 0.35)` : undefined };
+  const borderStyle = {
+    borderColor: color,
+    boxShadow: selected
+      ? `0 0 20px rgba(${rgb}, 0.35), 0 0 30px rgba(${rgb}, 0.2)`
+      : `0 0 18px rgba(${rgb}, 0.22), 0 0 28px rgba(${rgb}, 0.12)`,
+  };
   const handleStyle = { borderColor: color };
   const autoScale = data.autoScale === true;
   const width = typeof data.width === "number" ? data.width : undefined;
   const height = typeof data.height === "number" ? data.height : undefined;
   const sizeStyle = {
-    ...(width != null ? { width: `${width}px`, minWidth: `${width}px` } : {}),
+    ...(width != null ? { width: `${width}px`, minWidth: `${width}px` } : { width: "max-content", minWidth: "140px", maxWidth: "280px" }),
     ...(height != null ? { height: `${height}px`, minHeight: `${height}px` } : {}),
   };
 
@@ -73,7 +78,7 @@ function InfraNodeComponent({ data, selected }: NodeProps<InfraNodeType>) {
           <Icon className="h-5 w-5" strokeWidth={1.8} style={{ color }} />
         </div>
       )}
-      <span className="text-center text-sm font-medium text-[var(--foreground)]">{label}</span>
+      <span className="text-center text-sm font-medium text-[var(--foreground)] break-words overflow-hidden" style={{ wordBreak: "break-word" }}>{label}</span>
       {autoScale && (
         <span
           className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide opacity-80"

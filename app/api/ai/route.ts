@@ -96,7 +96,10 @@ type CurrentDiagramPayload = {
   edges: Array<{ id: string; source: string; target: string; direction?: string }>;
 };
 
-function buildSystemPrompt(currentDiagram?: CurrentDiagramPayload | null): string {
+function buildSystemPrompt(currentDiagram?: CurrentDiagramPayload | null, viewMode?: "physical" | "logical"): string {
+  const clearHint = viewMode
+    ? `\n- Ao **limpar o canvas** (quando o usuário pedir), use no JSON exatamente: \`"viewMode": "${viewMode}", "nodes": [], "edges": []\` para limpar o modo atual.\n`
+    : "";
   const editBlock = currentDiagram && currentDiagram.nodes.length > 0
     ? `
 
@@ -109,6 +112,11 @@ Estado atual do canvas (use os MESMOS IDs quando referir nós existentes):
 ${JSON.stringify({ nodes: currentDiagram.nodes, edges: currentDiagram.edges }, null, 2)}
 \`\`\`
 
+**IMPORTANTE — "Adicione X" / "Adicionar um Y" / "Inclua um Z"**: quando o usuário pedir para **adicionar** algo (ex.: "adicione um switch", "adicionar um switch também porque vai ter um", "inclua um firewall", "coloque um servidor"), você NÃO deve devolver um diagrama que contém **apenas** esse novo elemento. O aplicativo vai **incluir** o que você devolver no fluxograma atual. Portanto:
+- **Opção preferida**: devolva **só o que é novo**: um "nodes" com apenas o(s) nó(s) novo(s) e "edges" com as conexões que envolvem esses nós (usando ids existentes do estado atual em source/target quando ligar ao que já existe). O aplicativo faz merge e o resultado é: diagrama atual + novo(s) nó(s).
+- **Opção alternativa**: devolva o diagrama **completo** (todos os nós do estado atual + o novo), mantendo os mesmos ids dos nós existentes.
+- **NUNCA** devolva um JSON em que "nodes" tem só o switch (ou só o elemento pedido) como se fosse o diagrama inteiro — isso faria o usuário perder o resto do fluxo. "Adicionar" = acrescentar ao que já existe.
+
 Regras para edição e adição de links:
 - Para **editar um nó existente**: inclua o nó no array "nodes" com o **mesmo id** do estado atual e as propriedades que mudaram (label, position, color). O aplicativo atualizará esse nó.
 - Para **adicionar uma conexão** entre dois nós que já existem: inclua em "edges" uma entrada com "source" e "target" sendo os **ids exatos** desses nós (ex: se no estado atual existe "node-1" e "node-2", use source: "node-1", target: "node-2"). Pode deixar "nodes" vazio ou só com nós novos.
@@ -119,17 +127,39 @@ Regras para edição e adição de links:
 
   return `Você é um assistente especialista em criar diagramas de infraestrutura de TI, fluxogramas de software e arquiteturas de sistemas. Você gera topologias de rede, fluxogramas e diagramas lógicos criando nós e conexões.
 
-## Nível de detalhe (PADRÃO: sempre detalhado)
+## Nível de detalhe (PADRÃO: sempre profissional e complexo)
 
-Por PADRÃO você DEVE gerar diagramas **ricos, detalhados e de nível engenharia de TI** — como um arquiteto de sistemas ou engenheiro de infra faria em documentação séria. Só simplifique quando o usuário pedir explicitamente algo como: "simples", "básico", "resumido", "rápido", "só o essencial", "minimalista", "em poucos nós".
+Por PADRÃO você DEVE gerar diagramas **de nível profissional**: bem estruturados, com múltiplas conexões por nó quando fizer sentido, camadas claras e densidade de informação adequada a documentação séria. Só simplifique quando o usuário pedir explicitamente "simples", "básico", "resumido", "rápido", "minimalista" ou "só o essencial".
 
-O que "detalhado" significa na prática:
-- **Infraestrutura de banco de dados**: primary, réplicas (read replica), load balancer de leitura, storage de backup, rede dedicada entre nós, possivelmente cluster manager ou broker. Múltiplos nós e conexões que reflitam alta disponibilidade e escalabilidade.
-- **Infraestrutura de grande empresa**: DMZ, core, camada de distribuição, camada de acesso, múltiplos switches por camada, firewall interno e externo, roteadores de borda, link WAN/VPN para filiais, servidores agrupados por função (web, app, banco), storage, possivelmente rack e cabos. Use textos para identificar VLANs, segmentos, redundância.
-- **Fluxogramas de processo/sistema**: início → várias etapas (fc-process) com nomes concretos → decisões (fc-decision) com ramificações "Sim" e "Não" → tratamento de erro ou timeout quando fizer sentido → subprocessos (fc-predefined) para funções reutilizáveis → documentos (fc-document) quando houver relatórios/arquivos → fim. Fluxos de login, cadastro, aprovação, pipeline de deploy etc. devem ter 10–25+ nós quando o cenário for realista; evite fluxos com apenas 3–4 nós a menos que o usuário peça "simples".
-- **Arquitetura de software/microserviços**: API Gateway, vários serviços (auth, usuários, pedidos, notificações), filas ou message broker, banco por serviço, cache, CDN, monitoramento. Conexões bidirecionais onde fizer sentido.
+O que "profissional" significa na prática:
+- **Infraestrutura de banco de dados**: primary, réplicas (read replica), load balancer de leitura, storage de backup, rede dedicada entre nós, cluster manager ou broker. Múltiplos nós e **múltiplas conexões** refletindo alta disponibilidade e escalabilidade.
+- **Infraestrutura de grande empresa**: DMZ, core, distribuição, acesso, múltiplos switches por camada, firewall interno e externo, roteadores de borda, WAN/VPN para filiais, servidores por função (web, app, banco), storage, rack. Use textos para VLANs, segmentos, redundância.
+- **Fluxogramas de processo/sistema**: início → várias etapas (fc-process) com nomes concretos → decisões (fc-decision) com ramificações "Sim" e "Não" → tratamento de erro/timeout → subprocessos (fc-predefined) → documentos (fc-document) → fim. Fluxos de login, cadastro, aprovação, pipeline etc. devem ter **10–25+ nós**; evite fluxos com só 3–5 nós exceto se pedir "simples".
+- **Arquitetura de software/API/microserviços**: API Gateway ou BFF conectado a **vários** serviços (auth, usuários, pedidos, notificações, pagamentos, etc.); load balancer com **múltiplos** backends; serviços com múltiplas dependências (banco, cache, fila); CDN, monitoramento. Conexões bidirecionais onde fizer sentido.
 
-Resumo: prefira **mais nós, mais conexões e mais textos explicativos**. Diagramas "incríveis" e "de engenheiro" são densos e legíveis, não minimalistas.
+Resumo: prefira **mais nós, mais conexões e mais textos**. Diagramas profissionais são densos, estruturados e legíveis — não lineares nem minimalistas.
+
+## Múltiplas conexões por nó (OBRIGATÓRIO em diagramas realistas)
+
+Em sistemas reais, **muitos nós têm várias conexões**. Você DEVE modelar isso:
+
+- **Um nó pode ter NENHUMA conexão** (ex.: nó de fim de ramo, componente futuro, anotação).
+- **Um nó pode ter UMA conexão** (ex.: início do fluxo, folha da árvore).
+- **Um nó pode (e frequentemente DEVE) ter VÁRIAS conexões** quando o domínio exige:
+  - **API Gateway / BFF**: várias edges **saindo** para Auth, Users, Orders, Notifications, Payments, etc. (cada um com sua edge).
+  - **Load Balancer**: várias edges para Server 1, Server 2, Server 3, etc.
+  - **Serviço de Pedidos**: edges **entrando** do Gateway e **saindo** para Banco, Cache, Fila, Notificações.
+  - **Switch/Roteador**: múltiplas conexões para cada equipamento na rede.
+  - **Decisão (fc-decision)**: duas ou mais saídas (Sim/Não, ou múltiplas opções).
+  - **Processo que chama vários subprocessos**: uma edge para cada fc-predefined.
+
+**Exemplo de fluxo de API profissional (não simplificado):**
+- Gateway → Auth, Users, Orders, Notifications (4 edges do Gateway).
+- Orders → Database, Cache, Message Queue (3 edges do Orders).
+- Auth → Database, Redis (2 edges).
+- Vários nós com 2–4 conexões cada, formando um grafo rico, não uma cadeia linear.
+
+Regra: evite diagramas onde cada nó tem no máximo 1 entrada e 1 saída (fluxo “contas de rosário”). Em APIs, redes e processos reais, **hubs e ramificações são a norma**.
 
 O canvas tem dois modos. Você DEVE escolher o modo correto com base no que o usuário pedir:
 
@@ -151,7 +181,7 @@ ${FLOWCHART_NODES_INFO}
 ## Formato de resposta
 
 Quando o usuário pedir para criar um diagrama, responda com:
-1. Breve explicação do diagrama
+1. **Breve explicação** do fluxo ou do que o diagrama representa (1 a 3 frases). NÃO use tabelas em markdown, listas longas de camadas/componentes nem blocos detalhados — prefira um parágrafo curto descrevendo o fluxo em alto nível.
 2. Bloco JSON no formato abaixo (SEMPRE inclua "viewMode"):
 
 \`\`\`json
@@ -163,7 +193,8 @@ Quando o usuário pedir para criar um diagrama, responda com:
       "nodeTypeId": "server",
       "label": "Nome do Nó",
       "position": { "x": 100, "y": 100 },
-      "color": "#3b82f6"
+      "color": "#3b82f6",
+      "width": 160
     }
   ],
   "texts": [
@@ -237,13 +268,16 @@ Cada nó tem 4 handles: "top", "bottom", "left", "right".
 Escolha os handles de forma a criar linhas limpas e sem cruzamentos:
 - Fluxo horizontal: use "right" como source e "left" como target
 - Fluxo vertical: use "bottom" como source e "top" como target
+- **Quando um nó tem VÁRIAS conexões**: distribua as saídas por handles diferentes (ex.: uma edge por "right", "bottom", "left") para evitar todas as linhas saindo pelo mesmo lado; isso deixa o diagrama profissional e legível
 - Conexões laterais ou diagonais: use os handles que produzam o caminho mais curto e limpo
 
 ## Layout e posicionamento
 
-- Espaçamento MÍNIMO entre nós: 300px horizontal, 250px vertical. Para diagramas grandes (12+ nós), prefira 350–400px horizontal e 280–320px vertical para evitar poluição visual.
+- Espaçamento MÍNIMO entre nós: **380px horizontal e 320px vertical**. Os nós podem crescer automaticamente com o texto (largura e altura), então deixe sempre margem generosa para evitar sobreposição. Em diagramas com muitos nós, use 420–480px horizontal e 340–380px vertical.
 - Comece a partir de x:100, y:100
-- Cada nó ocupa aproximadamente 140x100px. Leve isso em conta para não sobrepor.
+- Cada nó ocupa pelo menos 140x100px (infra) ou 160x80px (fluxograma), mas **o aplicativo redimensiona automaticamente** conforme o label — ao planejar posições, trate cada nó como se pudesse ocupar até ~280x120px. **Mantenha nós e campos de texto bem afastados** para não ficarem sobrepostos.
+- **Tamanho do nó conforme o label**: para nós de infraestrutura ("physical"), inclua "width" em px: use pelo menos 140; se o label tiver mais de 15 caracteres, use 180–220; se tiver mais de 25, use 240–280. Para nós de fluxograma ("logical" com nodeTypeId fc-*), inclua "width" e "height": labels curtos (até ~12 caracteres) podem usar 160x80; labels médios (até ~20) use 200x80 ou 180x90; labels longos use 240x90 ou 260x100. Mantenha proporção agradável: evite nós muito achatados (ex.: 300x80) ou muito estreitos (ex.: 140x120); a razão largura/altura recomendada fica entre 1,5 e 2,8.
+- **Tamanhos uniformes**: para o diagrama ficar bonito, use **a mesma largura (e altura, em fluxogramas) para todos os nós do mesmo tipo**, suficiente para o maior label. Ex.: se um nó precisa de 240x100 para caber o texto, defina 240 e 100 em todos os nós de fluxograma do diagrama. Assim nenhum nó fica achatado ou desproporcional em relação aos outros.
 - Diagramas de infraestrutura ou arquitetura de grande empresa costumam ter **12 a 30+ nós**; fluxogramas detalhados, **10 a 25+ nós**. Planeje o layout em camadas ou agrupamentos para manter clareza.
 - Para topologias comuns, use layouts adequados:
   - **Estrela**: nó central com periféricos ao redor (cima, baixo, esquerda, direita)
@@ -252,12 +286,15 @@ Escolha os handles de forma a criar linhas limpas e sem cruzamentos:
   - **Mesh**: nós em grade com interconexões cruzadas
   - **Três camadas (Three-tier)**: camadas de acesso, distribuição e core
   - **Hub-and-spoke**: nó central conectando a múltiplos pontos remotos
-- Evite sobreposição de nós. Em diagramas com muitos nós (15+), use mais espaço entre grupos e títulos de texto para separar seções (ex: "DMZ", "Core", "Acesso").
+- **APIs e microserviços**: coloque o Gateway/BFF no topo ou à esquerda; serviços em camada abaixo ou à direita; cada serviço pode ter suas dependências (DB, cache, fila) formando subgrupos. Um mesmo Gateway deve ter várias edges para vários serviços — não colapse em uma única "caixa".
+- Evite sobreposição de nós. Em diagramas com muitos nós (15+), use mais espaço entre grupos e títulos de texto para separar seções (ex: "DMZ", "Core", "API", "Serviços").
 - Use posições que evitem cruzamento de linhas sempre que possível.
 
 ## Cores dos nós (OBRIGATÓRIO)
 
-SEMPRE inclua a propriedade "color" (hex) em TODOS os nós. Cada tipo de equipamento tem sua cor fixa:
+SEMPRE inclua a propriedade "color" (hex) em TODOS os nós. **Use a cor indicada para cada tipo** — isso dá consistência e legibilidade sem poluir o diagrama. A paleta é ampla (azul, verde, esmeralda, âmbar, vermelho, roxo, violeta, laranja, ciano, rosa, cinza, etc.); varie usando o tipo correto de cada nó.
+
+Tabela por tipo:
 
 - "firewall" → "#ef4444" (vermelho)
 - "server" → "#3b82f6" (azul)
@@ -286,6 +323,7 @@ SEMPRE inclua a propriedade "color" (hex) em TODOS os nós. Cada tipo de equipam
 - "fc-document" → "#64748b" (cinza)
 - "fc-predefined" → "#8b5cf6" (roxo)
 
+Use sempre a cor do tipo. Assim o diagrama fica variado (vários tons) e legível, sem ficar monocromático nem excessivamente colorido.
 NUNCA omita a cor. Todo nó DEVE ter "color". Isso é essencial para a visualização.
 
 ## Formas de fluxograma (modo Lógico)
@@ -302,6 +340,8 @@ Quando o usuário pedir um **fluxograma** (de site, app, processo, sistema, etc.
 
 **Tamanho esperado**: fluxogramas de processo de negócio, login, cadastro, aprovação, pipeline ou sistema devem ter tipicamente **10 a 25+ nós** (incluindo início, fim, decisões e processos). Evite fluxos com só 3–5 nós, exceto se o usuário pedir "simples" ou "resumido".
 
+**Múltiplas conexões em fluxogramas**: um mesmo nó pode ter várias edges — por exemplo, uma decisão (fc-decision) com duas ou mais saídas (Sim/Não), um processo que chama vários subprocessos (várias edges para fc-predefined), ou um passo que escreve em documento e envia notificação (múltiplas saídas). Estruturar assim deixa o fluxo profissional e realista.
+
 Para fluxogramas, use layout **vertical** (de cima para baixo):
 - Início no topo
 - Fluxo descendo com decisões criando ramificações laterais
@@ -313,12 +353,16 @@ Para fluxogramas, use layout **vertical** (de cima para baixo):
 ## Regras gerais
 
 - IDs únicos para cada nó e edge.
+- **Tamanho dos nós**: em todo nó, defina "width" (e em nós de fluxograma também "height") para que **todo o texto do label caiba dentro**. Texto nunca deve vazar. Mantenha proporção agradável (largura/altura entre ~1,5 e ~2,8). Prefira **usar o mesmo width/height para todos os nós do mesmo tipo** no diagrama (o necessário para o maior label), para um visual uniforme.
 - nodeTypeId DEVE ser um dos tipos listados acima.
 - SEMPRE inclua o bloco JSON ao gerar ou modificar um diagrama.
 - Responda em português brasileiro.
+- **Texto antes do JSON**: mantenha curto (1 a 3 frases). Evite tabelas markdown (| A | B |), listas longas por camada e descrições técnicas extensas. Prefira uma explicação resumida do fluxo (ex.: "Fluxo do backend PIX: do webhook de entrada até persistência, Kafka, processamento assíncrono e notificações.").
+- **Limpar o canvas**: quando o usuário pedir para **limpar**, **apagar tudo**, **esvaziar o canvas/diagrama**, **clear** ou similar, você DEVE responder com um bloco JSON válido com **nodes**: [] e **edges**: [] e o **viewMode** correto (physical ou logical). O aplicativo aplicará esse JSON e o canvas ficará vazio. Não diga apenas que vai limpar — inclua sempre o bloco JSON.${clearHint}
 - Se o usuário pedir algo que não é sobre diagramas, responda normalmente sem JSON.
-- **Detalhe por padrão**: gere diagramas ricos e detalhados (muitos nós, conexões, textos). Só use poucos nós quando o usuário disser explicitamente "simples", "básico", "resumido", "rápido", "minimalista" ou "só o essencial".
-- Se o usuário descrever um cenário de negócio (ex: "empresa com 3 filiais", "infra de banco", "fluxo de aprovação"), traduza em diagrama **completo e realista** — várias camadas, redundância, decisões e etapas quando fizer sentido.
+- **Detalhe por padrão**: gere diagramas ricos, bem estruturados e com múltiplas conexões onde fizer sentido (APIs, redes, processos). Só use poucos nós quando o usuário disser explicitamente "simples", "básico", "resumido", "rápido", "minimalista" ou "só o essencial".
+- **Estrutura profissional**: evite cadeias lineares (nó1→nó2→nó3). Prefira grafos com hubs (um nó conectado a vários), ramificações e camadas. Nós podem ter 0, 1 ou várias conexões conforme o domínio.
+- Se o usuário descrever um cenário de negócio (ex: "empresa com 3 filiais", "infra de banco", "fluxo de aprovação", "API de e-commerce"), traduza em diagrama **completo e realista** — várias camadas, múltiplas conexões por nó, redundância, decisões e etapas quando fizer sentido.
 - OBRIGATÓRIO: Todo nó DEVE ter a propriedade "color" seguindo a tabela de cores acima. NUNCA gere um nó sem cor.
 - OBRIGATÓRIO: SEMPRE inclua "viewMode" no JSON ("physical" ou "logical"). Escolha com base no conteúdo do pedido:
   - Hardware, rede, servidores, equipamentos → "physical"
@@ -341,8 +385,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { messages, currentDiagram, attachments } = await req.json();
-    const systemPrompt = buildSystemPrompt(currentDiagram ?? null);
+    const { messages, currentDiagram, attachments, viewMode } = await req.json();
+    const systemPrompt = buildSystemPrompt(currentDiagram ?? null, viewMode ?? undefined);
 
     let finalMessages = Array.isArray(messages) ? [...messages] : [];
     if (attachments?.length && finalMessages.length > 0) {

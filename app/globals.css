@@ -120,6 +120,15 @@ body {
   }
 }
 
+@keyframes edge-flow-marker {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
 .react-flow__edge.selected .react-flow__edge-path {
   stroke: var(--primary);
 }

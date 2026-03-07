@@ -1,11 +1,9 @@
 "use client";
 
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import {
-  BezierEdge,
   BaseEdge,
   getBezierPath,
-  MarkerType,
   Position,
   useStore,
   type EdgeProps,
@@ -16,9 +14,46 @@ export type EdgeDirection = "send" | "receive" | "bidirectional";
 const PARALLEL_OFFSET = 6;
 const DEFAULT_EDGE_COLOR = "var(--primary)";
 
+/* Triângulo menor (ponta à direita); origem no centro da base para offset-path */
+const TRIANGLE_PATH = "M 0 0 L 5 2.5 L 0 5 Z";
+const TRIANGLE_TIP_X = 5;
+const TRIANGLE_TIP_Y = 2.5;
+
+const FLOW_ANIMATION = "edge-flow-marker 2s linear infinite";
+
 function getNodeColor(node: { data?: Record<string, unknown> } | undefined): string | undefined {
   const color = node?.data?.color;
   return typeof color === "string" ? color : undefined;
+}
+
+function AnimatedTriangle({
+  pathId,
+  pathD,
+  fill,
+}: {
+  pathId: string;
+  pathD: string;
+  fill: string;
+}) {
+  return (
+    <>
+      <path id={pathId} d={pathD} fill="none" stroke="none" />
+      <g
+        style={{
+          offsetPath: `url(#${pathId})`,
+          offsetRotate: "auto",
+          offsetDistance: "0%",
+          animation: FLOW_ANIMATION,
+        } as React.CSSProperties}
+      >
+        <path
+          d={TRIANGLE_PATH}
+          fill={fill}
+          transform={`translate(${-TRIANGLE_TIP_X}, ${-TRIANGLE_TIP_Y})`}
+        />
+      </g>
+    </>
+  );
 }
 
 function DirectionalEdgeComponent(props: EdgeProps) {
@@ -43,6 +78,23 @@ function DirectionalEdgeComponent(props: EdgeProps) {
     ...props.style,
     stroke: sendingColor ?? DEFAULT_EDGE_COLOR,
   };
+
+  const strokeColor = sendingColor ?? DEFAULT_EDGE_COLOR;
+  const glowFilterId = `edge-glow-${props.id}`;
+  const GlowWrap = ({ children }: { children: ReactNode }) => (
+    <>
+      <defs>
+        <filter id={glowFilterId} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <g filter={`url(#${glowFilterId})`}>{children}</g>
+    </>
+  );
 
   if (direction === "bidirectional") {
     const [path1] = getBezierPath({
@@ -81,24 +133,32 @@ function DirectionalEdgeComponent(props: EdgeProps) {
     };
 
     return (
-      <>
+      <GlowWrap>
         <g transform={`translate(${perpX}, ${perpY})`}>
           <BaseEdge
             path={path1}
-            markerEnd={MarkerType.ArrowClosed}
             style={style1}
             interactionWidth={props.interactionWidth}
+          />
+          <AnimatedTriangle
+            pathId={`flow-path-${props.id}-1`}
+            pathD={path1}
+            fill={sourceColor ?? DEFAULT_EDGE_COLOR}
           />
         </g>
         <g transform={`translate(${-perpX}, ${-perpY})`}>
           <BaseEdge
             path={path2}
-            markerEnd={MarkerType.ArrowClosed}
             style={style2}
             interactionWidth={props.interactionWidth}
           />
+          <AnimatedTriangle
+            pathId={`flow-path-${props.id}-2`}
+            pathD={path2}
+            fill={targetColor ?? DEFAULT_EDGE_COLOR}
+          />
         </g>
-      </>
+      </GlowWrap>
     );
   }
 
@@ -112,21 +172,42 @@ function DirectionalEdgeComponent(props: EdgeProps) {
       targetPosition: props.sourcePosition ?? Position.Bottom,
     });
     return (
-      <BaseEdge
-        path={path}
-        markerEnd={MarkerType.ArrowClosed}
-        style={baseStyle}
-        interactionWidth={props.interactionWidth}
-      />
+      <GlowWrap>
+        <BaseEdge
+          path={path}
+          style={baseStyle}
+          interactionWidth={props.interactionWidth}
+        />
+        <AnimatedTriangle
+          pathId={`flow-path-${props.id}`}
+          pathD={path}
+          fill={strokeColor}
+        />
+      </GlowWrap>
     );
   }
 
+  const [path] = getBezierPath({
+    sourceX: props.sourceX,
+    sourceY: props.sourceY,
+    targetX: props.targetX,
+    targetY: props.targetY,
+    sourcePosition: props.sourcePosition ?? Position.Bottom,
+    targetPosition: props.targetPosition ?? Position.Top,
+  });
   return (
-    <BezierEdge
-      {...props}
-      style={baseStyle}
-      markerEnd={MarkerType.ArrowClosed}
-    />
+    <GlowWrap>
+      <BaseEdge
+        path={path}
+        style={baseStyle}
+        interactionWidth={props.interactionWidth}
+      />
+      <AnimatedTriangle
+        pathId={`flow-path-${props.id}`}
+        pathD={path}
+        fill={strokeColor}
+      />
+    </GlowWrap>
   );
 }
 
