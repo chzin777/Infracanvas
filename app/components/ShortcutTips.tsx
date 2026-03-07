@@ -56,17 +56,6 @@ export function ShortcutTips() {
     setTimeout(() => setTip(null), 200);
   };
 
-  useEffect(() => {
-    if (!tip || !visible) return;
-    const id = tip.id;
-    const timer = setTimeout(() => {
-      markAsShown(id);
-      setVisible(false);
-      setTimeout(() => setTip(null), 200);
-    }, 6000);
-    return () => clearTimeout(timer);
-  }, [tip, visible]);
-
   if (!tip || !visible) return null;
 
   return (

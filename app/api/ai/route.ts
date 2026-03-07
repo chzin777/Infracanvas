@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import { PDFParse } from "pdf-parse";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MB
 
@@ -17,6 +16,7 @@ function stripHtmlToText(html: string): string {
 async function extractTextFromAttachments(attachments: AttachmentPayload[]): Promise<string> {
   if (!attachments?.length) return "";
   const parts: string[] = [];
+  let hasValidText = false;
   for (const att of attachments) {
     const raw = Buffer.from(att.content, "base64");
     if (raw.length > MAX_ATTACHMENT_BYTES) {
@@ -24,23 +24,36 @@ async function extractTextFromAttachments(attachments: AttachmentPayload[]): Pro
       continue;
     }
     if (att.type === "pdf") {
+      let pdfDoc: Awaited<ReturnType<typeof import("unpdf")["getDocumentProxy"]>> | null = null;
       try {
-        const parser = new PDFParse({ data: new Uint8Array(raw) });
-        const result = await parser.getText();
-        const text = (result?.text ?? "").trim();
-        await parser.destroy();
-        parts.push(`--- Conteúdo do PDF "${att.name}" ---\n\n${text || "(Nenhum texto extraído)"}`);
+        const unpdf = await import("unpdf");
+        pdfDoc = await unpdf.getDocumentProxy(new Uint8Array(raw));
+        const { text } = await unpdf.extractText(pdfDoc, { mergePages: true });
+        const textStr = (typeof text === "string" ? text : (text as string[] || []).join("\n")).trim();
+        const content = textStr || "(PDF sem camada de texto extraível — pode ser escaneado ou protegido)";
+        if (textStr.length > 0) hasValidText = true;
+        parts.push(`--- Conteúdo do PDF "${att.name}" ---\n\n${content}`);
       } catch (e) {
-        parts.push(`--- Erro ao ler PDF "${att.name}": ${String(e)} ---`);
+        parts.push(`--- Erro ao processar PDF "${att.name}" (${String(e)}) ---\n\nO texto não pôde ser extraído. Peça ao usuário que descreva o processo ou cole o conteúdo.`);
+      } finally {
+        try {
+          await pdfDoc?.destroy();
+        } catch {
+          /* ignore */
+        }
       }
     } else if (att.type === "html") {
       const html = raw.toString("utf-8");
       const text = stripHtmlToText(html);
+      if (text.length > 0) hasValidText = true;
       parts.push(`--- Conteúdo do HTML "${att.name}" ---\n\n${text || "(Documento vazio)"}`);
     }
   }
   if (!parts.length) return "";
-  return "O usuário anexou o(s) seguinte(s) documento(s). Use o conteúdo abaixo para gerar o fluxograma ou diagrama solicitado.\n\n" + parts.join("\n\n");
+  const header = hasValidText
+    ? "O usuário anexou documento(s). O conteúdo abaixo FOI extraído com sucesso. USE-O para gerar o fluxograma ou diagrama. NÃO diga que não conseguiu ler o arquivo — use o texto fornecido.\n\n"
+    : "O usuário anexou documento(s), mas não foi possível extrair texto utilizável. Peça que ele descreva o processo, as etapas e as decisões, ou que cole o texto do documento.\n\n";
+  return header + parts.join("\n\n");
 }
 
 const PHYSICAL_NODES_INFO = [
@@ -313,7 +326,7 @@ Para fluxogramas, use layout **vertical** (de cima para baixo):
   - Se misturado, priorize o foco principal do pedido.
 - Só use nodeTypeIds do modo escolhido. Nós físicos NÃO funcionam no modo lógico e vice-versa.
 - Quando o usuário pedir infraestrutura física e mencionar fluxo/processo/diagrama dentro de um servidor (ou nó), inclua "innerFlows" com um item cujo "forNodeId" seja o id do nó correspondente; use formas de fluxograma (fc-*) nos nós do fluxo interno.
-- **Documentos anexados (PDF/HTML)**: O usuário pode anexar arquivos PDF ou HTML. O conteúdo extraído (texto do PDF ou texto limpo do HTML) será incluído na mensagem dele. Use esse conteúdo para gerar o fluxograma ou diagrama solicitado — por exemplo, transformar um processo descrito no documento em fluxograma, ou extrair entidades e fluxos do texto.${editBlock}`;}
+- **Documentos anexados (PDF/HTML)**: O usuário pode anexar arquivos PDF ou HTML. O conteúdo extraído será incluído na mensagem dele. Quando esse conteúdo estiver presente e contiver texto utilizável, você DEVE usá-lo para gerar o fluxograma ou diagrama — NUNCA responda dizendo que não conseguiu ler o arquivo, pois o sistema já fez a extração. Se o conteúdo estiver vazio ou houver mensagem de erro na própria mensagem, aí sim peça ao usuário que descreva o processo ou cole o texto.${editBlock}`;}
 
 
 export async function POST(req: NextRequest) {

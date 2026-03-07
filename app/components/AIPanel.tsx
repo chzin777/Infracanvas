@@ -95,6 +95,17 @@ const SUGGESTIONS = [
   "Crie uma topologia em estrela com um switch core e 6 dispositivos",
 ];
 
+const GENERATION_STATUS_PHRASES = [
+  "Pensando...",
+  "Analisando seu pedido...",
+  "Criando fluxos...",
+  "Montando infraestrutura...",
+  "Desenhando nós e conexões...",
+  "Organizando o layout...",
+  "Quase lá...",
+  "Finalizando o diagrama...",
+];
+
 /** Snapshot do canvas atual para a IA editar / adicionar links (envia nós e edges no request). */
 export interface CurrentDiagramSnapshot {
   nodes: Array<{ id: string; label?: string; nodeTypeId?: string; position: { x: number; y: number }; type?: string }>;
@@ -115,6 +126,7 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
   const [attachments, setAttachments] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [statusPhraseIndex, setStatusPhraseIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -127,6 +139,17 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
   useEffect(() => {
     scrollToBottom();
   }, [messages, streamingContent, scrollToBottom]);
+
+  useEffect(() => {
+    if (!loading) {
+      setStatusPhraseIndex(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setStatusPhraseIndex((i) => (i + 1) % GENERATION_STATUS_PHRASES.length);
+    }, 2200);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   useEffect(() => {
     if (open) {
@@ -266,8 +289,7 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setInput(e.target.value);
       const el = e.target;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
+      el.style.height = "24px";
     },
     []
   );
@@ -331,26 +353,13 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
   };
 
   const renderStreamingContent = () => {
-    if (!streamingContent) return null;
-    const text = removeJsonBlock(streamingContent);
-    const hasPartialJson =
-      streamingContent.includes("```json") &&
-      (streamingContent.match(/```/g) || []).length < 2;
-
+    if (!loading) return null;
+    const phrase = GENERATION_STATUS_PHRASES[statusPhraseIndex] ?? GENERATION_STATUS_PHRASES[0];
     return (
       <div className="flex justify-start">
-        <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed bg-slate-800/80 text-slate-200 border border-slate-700/50">
-          {text && (
-            <div className="ai-chat-markdown whitespace-pre-wrap">
-              <ReactMarkdown>{text}</ReactMarkdown>
-            </div>
-          )}
-          {hasPartialJson && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Gerando diagrama...
-            </div>
-          )}
+        <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed bg-slate-800/80 text-slate-200 border border-slate-700/50 flex items-center gap-2.5">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+          <span className="animate-pulse">{phrase}</span>
         </div>
       </div>
     );
@@ -415,7 +424,7 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 scrollbar-thin">
-            {messages.length === 0 && !streamingContent && (
+            {messages.length === 0 && !streamingContent && !loading && (
               <div className="h-full flex flex-col items-center justify-center text-center px-2">
                 <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
                   <Sparkles className="h-6 w-6 text-primary/60" />
@@ -511,8 +520,8 @@ export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelPro
                 placeholder={attachments.length ? "Descreva o que deseja (opcional) ou envie..." : "Descreva o diagrama ou anexe PDF/HTML..."}
                 rows={1}
                 className="flex-1 bg-transparent text-sm text-slate-100 placeholder-slate-500
-                  resize-none outline-none"
-                style={{ minHeight: "24px", maxHeight: "96px" }}
+                  resize-none outline-none overflow-x-auto overflow-y-hidden"
+                style={{ height: "24px" }}
                 disabled={loading}
               />
               <button
