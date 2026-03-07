@@ -707,7 +707,9 @@ export function InfraCanvas() {
         return newNodes;
       });
       setSelectedNode((prev) =>
-        prev && prev.id === nodeId ? { ...prev, data: { ...prev.data, ...size } } : prev
+        prev && prev.id === nodeId
+          ? ({ ...prev, data: { ...prev.data, ...size } } as CanvasNode)
+          : prev
       );
     },
     [edges, pushToHistory]

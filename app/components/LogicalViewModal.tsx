@@ -123,7 +123,7 @@ function ModalLogicalCanvas({
       n.id === nodeId ? { ...n, data: { ...n.data, label } } : n
     ) as CanvasNode[]);
     setSelectedNode((prev) =>
-      prev && prev.id === nodeId ? { ...prev, data: { ...prev.data, label } } : prev
+      prev && prev.id === nodeId ? ({ ...prev, data: { ...prev.data, label } } as CanvasNode) : prev
     );
   }, [setNodes]);
 
@@ -132,7 +132,7 @@ function ModalLogicalCanvas({
       n.id === nodeId ? { ...n, data: { ...n.data, color } } : n
     ) as CanvasNode[]);
     setSelectedNode((prev) =>
-      prev && prev.id === nodeId ? { ...prev, data: { ...prev.data, color } } : prev
+      prev && prev.id === nodeId ? ({ ...prev, data: { ...prev.data, color } } as CanvasNode) : prev
     );
   }, [setNodes]);
 
@@ -141,7 +141,7 @@ function ModalLogicalCanvas({
       n.id === nodeId ? { ...n, data: { ...n.data, autoScale } } : n
     ) as CanvasNode[]);
     setSelectedNode((prev) =>
-      prev && prev.id === nodeId ? { ...prev, data: { ...prev.data, autoScale } } : prev
+      prev && prev.id === nodeId ? ({ ...prev, data: { ...prev.data, autoScale } } as CanvasNode) : prev
     );
   }, [setNodes]);
 
@@ -150,7 +150,7 @@ function ModalLogicalCanvas({
       n.id === nodeId && n.type === "text" ? { ...n, data: { ...n.data, content } } : n
     ) as CanvasNode[]);
     setSelectedNode((prev) =>
-      prev && prev.id === nodeId ? { ...prev, data: { ...prev.data, content } } : prev
+      prev && prev.id === nodeId ? ({ ...prev, data: { ...prev.data, content } } as CanvasNode) : prev
     );
   }, [setNodes]);
 
