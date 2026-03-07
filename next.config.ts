@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
     "127.0.0.1",
     "10.1.3.161",
   ],
+  turbopack: {},
   webpack: (config, { dev }) => {
     if (dev) {
       config.watchOptions = {
