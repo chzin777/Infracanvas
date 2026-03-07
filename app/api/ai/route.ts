@@ -365,7 +365,7 @@ export async function POST(req: NextRequest) {
         "X-Title": "InfraCanvas Pro",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.0-flash-001",
+        model: "anthropic/claude-sonnet-4.6",
         messages: [{ role: "system", content: systemPrompt }, ...finalMessages],
         stream: true,
         temperature: 0.7,
