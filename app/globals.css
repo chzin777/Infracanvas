@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Força tema escuro pela classe .dark, ignorando preferência do sistema */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --primary: #007bff;
   --background-light: #f5f7f8;
