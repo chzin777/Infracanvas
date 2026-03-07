@@ -1,4 +1,47 @@
 import { NextRequest } from "next/server";
+import { PDFParse } from "pdf-parse";
+
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MB
+
+type AttachmentPayload = { type: "pdf" | "html"; name: string; content: string };
+
+function stripHtmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function extractTextFromAttachments(attachments: AttachmentPayload[]): Promise<string> {
+  if (!attachments?.length) return "";
+  const parts: string[] = [];
+  for (const att of attachments) {
+    const raw = Buffer.from(att.content, "base64");
+    if (raw.length > MAX_ATTACHMENT_BYTES) {
+      parts.push(`[Arquivo ${att.name} ignorado: maior que 5 MB]`);
+      continue;
+    }
+    if (att.type === "pdf") {
+      try {
+        const parser = new PDFParse({ data: new Uint8Array(raw) });
+        const result = await parser.getText();
+        const text = (result?.text ?? "").trim();
+        await parser.destroy();
+        parts.push(`--- Conteúdo do PDF "${att.name}" ---\n\n${text || "(Nenhum texto extraído)"}`);
+      } catch (e) {
+        parts.push(`--- Erro ao ler PDF "${att.name}": ${String(e)} ---`);
+      }
+    } else if (att.type === "html") {
+      const html = raw.toString("utf-8");
+      const text = stripHtmlToText(html);
+      parts.push(`--- Conteúdo do HTML "${att.name}" ---\n\n${text || "(Documento vazio)"}`);
+    }
+  }
+  if (!parts.length) return "";
+  return "O usuário anexou o(s) seguinte(s) documento(s). Use o conteúdo abaixo para gerar o fluxograma ou diagrama solicitado.\n\n" + parts.join("\n\n");
+}
 
 const PHYSICAL_NODES_INFO = [
   '"server": Servidor',
@@ -35,8 +78,45 @@ const FLOWCHART_NODES_INFO = [
   '"fc-predefined": Processo Predefinido (retângulo com linhas laterais — sub-rotina, função)',
 ].map((n) => `- ${n}`).join("\n");
 
-function buildSystemPrompt(): string {
+type CurrentDiagramPayload = {
+  nodes: Array<{ id: string; label?: string; nodeTypeId?: string; position: { x: number; y: number }; type?: string }>;
+  edges: Array<{ id: string; source: string; target: string; direction?: string }>;
+};
+
+function buildSystemPrompt(currentDiagram?: CurrentDiagramPayload | null): string {
+  const editBlock = currentDiagram && currentDiagram.nodes.length > 0
+    ? `
+
+## Editar diagrama existente / adicionar links
+
+O usuário pode pedir para **editar** o diagrama atual (renomear nó, mudar posição, alterar cor), **adicionar uma conexão** entre dois nós existentes, ou **adicionar novos nós** e conectá-los ao que já existe.
+
+Estado atual do canvas (use os MESMOS IDs quando referir nós existentes):
+\`\`\`json
+${JSON.stringify({ nodes: currentDiagram.nodes, edges: currentDiagram.edges }, null, 2)}
+\`\`\`
+
+Regras para edição e adição de links:
+- Para **editar um nó existente**: inclua o nó no array "nodes" com o **mesmo id** do estado atual e as propriedades que mudaram (label, position, color). O aplicativo atualizará esse nó.
+- Para **adicionar uma conexão** entre dois nós que já existem: inclua em "edges" uma entrada com "source" e "target" sendo os **ids exatos** desses nós (ex: se no estado atual existe "node-1" e "node-2", use source: "node-1", target: "node-2"). Pode deixar "nodes" vazio ou só com nós novos.
+- Para **adicionar novos nós** e conectá-los: use ids novos (ex: "node-4", "node-5") nos novos nós; nas "edges", use o id do nó existente em source ou target para ligar ao novo.
+- Pode devolver **só as alterações**: por exemplo, só "edges" com uma nova conexão (source/target = ids existentes) e "nodes": [] ou só os nós que mudaram/foram adicionados. O aplicativo faz merge pelo id.
+- SEMPRE inclua "viewMode" no JSON com o modo atual do diagrama (physical ou logical).`
+    : "";
+
   return `Você é um assistente especialista em criar diagramas de infraestrutura de TI, fluxogramas de software e arquiteturas de sistemas. Você gera topologias de rede, fluxogramas e diagramas lógicos criando nós e conexões.
+
+## Nível de detalhe (PADRÃO: sempre detalhado)
+
+Por PADRÃO você DEVE gerar diagramas **ricos, detalhados e de nível engenharia de TI** — como um arquiteto de sistemas ou engenheiro de infra faria em documentação séria. Só simplifique quando o usuário pedir explicitamente algo como: "simples", "básico", "resumido", "rápido", "só o essencial", "minimalista", "em poucos nós".
+
+O que "detalhado" significa na prática:
+- **Infraestrutura de banco de dados**: primary, réplicas (read replica), load balancer de leitura, storage de backup, rede dedicada entre nós, possivelmente cluster manager ou broker. Múltiplos nós e conexões que reflitam alta disponibilidade e escalabilidade.
+- **Infraestrutura de grande empresa**: DMZ, core, camada de distribuição, camada de acesso, múltiplos switches por camada, firewall interno e externo, roteadores de borda, link WAN/VPN para filiais, servidores agrupados por função (web, app, banco), storage, possivelmente rack e cabos. Use textos para identificar VLANs, segmentos, redundância.
+- **Fluxogramas de processo/sistema**: início → várias etapas (fc-process) com nomes concretos → decisões (fc-decision) com ramificações "Sim" e "Não" → tratamento de erro ou timeout quando fizer sentido → subprocessos (fc-predefined) para funções reutilizáveis → documentos (fc-document) quando houver relatórios/arquivos → fim. Fluxos de login, cadastro, aprovação, pipeline de deploy etc. devem ter 10–25+ nós quando o cenário for realista; evite fluxos com apenas 3–4 nós a menos que o usuário peça "simples".
+- **Arquitetura de software/microserviços**: API Gateway, vários serviços (auth, usuários, pedidos, notificações), filas ou message broker, banco por serviço, cache, CDN, monitoramento. Conexões bidirecionais onde fizer sentido.
+
+Resumo: prefira **mais nós, mais conexões e mais textos explicativos**. Diagramas "incríveis" e "de engenheiro" são densos e legíveis, não minimalistas.
 
 O canvas tem dois modos. Você DEVE escolher o modo correto com base no que o usuário pedir:
 
@@ -148,9 +228,10 @@ Escolha os handles de forma a criar linhas limpas e sem cruzamentos:
 
 ## Layout e posicionamento
 
-- Espaçamento MÍNIMO entre nós: 300px horizontal, 250px vertical. Prefira 350x300 para diagramas com textos.
+- Espaçamento MÍNIMO entre nós: 300px horizontal, 250px vertical. Para diagramas grandes (12+ nós), prefira 350–400px horizontal e 280–320px vertical para evitar poluição visual.
 - Comece a partir de x:100, y:100
 - Cada nó ocupa aproximadamente 140x100px. Leve isso em conta para não sobrepor.
+- Diagramas de infraestrutura ou arquitetura de grande empresa costumam ter **12 a 30+ nós**; fluxogramas detalhados, **10 a 25+ nós**. Planeje o layout em camadas ou agrupamentos para manter clareza.
 - Para topologias comuns, use layouts adequados:
   - **Estrela**: nó central com periféricos ao redor (cima, baixo, esquerda, direita)
   - **Hierárquico/Árvore**: camadas de cima para baixo ou esquerda para direita
@@ -158,7 +239,7 @@ Escolha os handles de forma a criar linhas limpas e sem cruzamentos:
   - **Mesh**: nós em grade com interconexões cruzadas
   - **Três camadas (Three-tier)**: camadas de acesso, distribuição e core
   - **Hub-and-spoke**: nó central conectando a múltiplos pontos remotos
-- Evite sobreposição de nós. Se o diagrama tiver muitos nós (>8), aumente o espaçamento.
+- Evite sobreposição de nós. Em diagramas com muitos nós (15+), use mais espaço entre grupos e títulos de texto para separar seções (ex: "DMZ", "Core", "Acesso").
 - Use posições que evitem cruzamento de linhas sempre que possível.
 
 ## Cores dos nós (OBRIGATÓRIO)
@@ -198,13 +279,15 @@ NUNCA omita a cor. Todo nó DEVE ter "color". Isso é essencial para a visualiza
 
 No modo Lógico, além dos nós de infraestrutura, você tem acesso a formas de fluxograma para criar diagramas de processo, fluxos de sistema, jornadas de usuário, etc.
 
-Quando o usuário pedir um **fluxograma** (de site, app, processo, sistema, etc.), use as formas "fc-*":
-- **fc-terminal** para início e fim do fluxo
-- **fc-decision** para decisões/condições (sim/não, if/else)
-- **fc-process** para ações, etapas, tarefas
-- **fc-io** para entradas do usuário ou saídas de dados
-- **fc-document** para geração de documentos, relatórios
-- **fc-predefined** para sub-rotinas, funções, processos reutilizáveis
+Quando o usuário pedir um **fluxograma** (de site, app, processo, sistema, etc.), use as formas "fc-*" e gere fluxos **detalhados e realistas** (a menos que peça "simples" ou "básico"):
+- **fc-terminal** para início e fim do fluxo (sempre pelo menos um de cada).
+- **fc-decision** para decisões/condições (sim/não, if/else) — use várias quando o processo tiver ramificações (validação, permissão, erro, timeout).
+- **fc-process** para ações e etapas — use nomes concretos ("Validar CPF", "Persistir no banco", "Enviar e-mail de confirmação") e várias etapas em sequência.
+- **fc-io** para entradas do usuário ou saídas de dados (formulário, resposta da API, etc.).
+- **fc-document** para geração de documentos, relatórios ou arquivos.
+- **fc-predefined** para sub-rotinas, funções ou processos reutilizáveis (ex: "Enviar notificação", "Registrar log").
+
+**Tamanho esperado**: fluxogramas de processo de negócio, login, cadastro, aprovação, pipeline ou sistema devem ter tipicamente **10 a 25+ nós** (incluindo início, fim, decisões e processos). Evite fluxos com só 3–5 nós, exceto se o usuário pedir "simples" ou "resumido".
 
 Para fluxogramas, use layout **vertical** (de cima para baixo):
 - Início no topo
@@ -221,15 +304,16 @@ Para fluxogramas, use layout **vertical** (de cima para baixo):
 - SEMPRE inclua o bloco JSON ao gerar ou modificar um diagrama.
 - Responda em português brasileiro.
 - Se o usuário pedir algo que não é sobre diagramas, responda normalmente sem JSON.
-- Não tenha medo de criar diagramas grandes e detalhados quando o cenário pedir.
-- Se o usuário descrever um cenário de negócio (ex: "empresa com 3 filiais"), traduza isso em infraestrutura realista.
+- **Detalhe por padrão**: gere diagramas ricos e detalhados (muitos nós, conexões, textos). Só use poucos nós quando o usuário disser explicitamente "simples", "básico", "resumido", "rápido", "minimalista" ou "só o essencial".
+- Se o usuário descrever um cenário de negócio (ex: "empresa com 3 filiais", "infra de banco", "fluxo de aprovação"), traduza em diagrama **completo e realista** — várias camadas, redundância, decisões e etapas quando fizer sentido.
 - OBRIGATÓRIO: Todo nó DEVE ter a propriedade "color" seguindo a tabela de cores acima. NUNCA gere um nó sem cor.
 - OBRIGATÓRIO: SEMPRE inclua "viewMode" no JSON ("physical" ou "logical"). Escolha com base no conteúdo do pedido:
   - Hardware, rede, servidores, equipamentos → "physical"
   - Software, fluxograma, processos, apps, sites, APIs, cloud → "logical"
   - Se misturado, priorize o foco principal do pedido.
 - Só use nodeTypeIds do modo escolhido. Nós físicos NÃO funcionam no modo lógico e vice-versa.
-- Quando o usuário pedir infraestrutura física e mencionar fluxo/processo/diagrama dentro de um servidor (ou nó), inclua "innerFlows" com um item cujo "forNodeId" seja o id do nó correspondente; use formas de fluxograma (fc-*) nos nós do fluxo interno.`;}
+- Quando o usuário pedir infraestrutura física e mencionar fluxo/processo/diagrama dentro de um servidor (ou nó), inclua "innerFlows" com um item cujo "forNodeId" seja o id do nó correspondente; use formas de fluxograma (fc-*) nos nós do fluxo interno.
+- **Documentos anexados (PDF/HTML)**: O usuário pode anexar arquivos PDF ou HTML. O conteúdo extraído (texto do PDF ou texto limpo do HTML) será incluído na mensagem dele. Use esse conteúdo para gerar o fluxograma ou diagrama solicitado — por exemplo, transformar um processo descrito no documento em fluxograma, ou extrair entidades e fluxos do texto.${editBlock}`;}
 
 
 export async function POST(req: NextRequest) {
@@ -244,8 +328,20 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { messages } = await req.json();
-    const systemPrompt = buildSystemPrompt();
+    const { messages, currentDiagram, attachments } = await req.json();
+    const systemPrompt = buildSystemPrompt(currentDiagram ?? null);
+
+    let finalMessages = Array.isArray(messages) ? [...messages] : [];
+    if (attachments?.length && finalMessages.length > 0) {
+      const docContext = await extractTextFromAttachments(attachments);
+      if (docContext) {
+        const lastIdx = finalMessages.length - 1;
+        const last = finalMessages[lastIdx];
+        if (last?.role === "user" && typeof last.content === "string") {
+          finalMessages[lastIdx] = { ...last, content: `${docContext}\n\n---\n\nPergunta do usuário: ${last.content}` };
+        }
+      }
+    }
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
@@ -257,7 +353,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "google/gemini-2.0-flash-001",
-        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        messages: [{ role: "system", content: systemPrompt }, ...finalMessages],
         stream: true,
         temperature: 0.7,
       }),

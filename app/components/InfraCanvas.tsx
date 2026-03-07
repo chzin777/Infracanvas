@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -41,7 +41,7 @@ import { DirectionalEdge } from "./edges/DirectionalEdge";
 import type { EdgeDirection } from "./edges/DirectionalEdge";
 import { LogicalViewModal } from "./LogicalViewModal";
 import { useProjectStorage, type ProjectData, type ProjectMeta } from "./useProjectStorage";
-import { AIPanel, type DiagramData } from "./AIPanel";
+import { AIPanel, type DiagramData, type CurrentDiagramSnapshot } from "./AIPanel";
 import { ShortcutTips } from "./ShortcutTips";
 
 const nodeTypes = { infra: InfraNode, text: TextNode, flowchart: FlowchartNode };
@@ -473,6 +473,22 @@ export function InfraCanvas() {
 
   const nodes = viewMode === "physical" ? physicalNodes : logicalNodes;
   const edges = viewMode === "physical" ? physicalEdges : logicalEdges;
+
+  const currentDiagram = useMemo((): CurrentDiagramSnapshot => ({
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      label: (n.data as { label?: string })?.label,
+      nodeTypeId: (n.data as { nodeTypeId?: string })?.nodeTypeId,
+      position: n.position,
+      type: n.type,
+    })),
+    edges: edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      direction: (e.data as { direction?: string })?.direction,
+    })),
+  }), [nodes, edges]);
   const setNodes = viewMode === "physical" ? setPhysicalNodes : setLogicalNodes;
   const setEdges = viewMode === "physical" ? setPhysicalEdges : setLogicalEdges;
 
@@ -734,38 +750,48 @@ export function InfraCanvas() {
       const currentEdges = targetMode === viewMode ? edges : (targetMode === "physical" ? physicalEdges : logicalEdges);
 
       const ts = Date.now();
+      const existingIds = new Set(currentNodes.map((n) => n.id));
+
+      const idMap = new Map<string, string>();
+      data.nodes.forEach((n, i) => {
+        const id = n.id ?? `node-${i}`;
+        idMap.set(id, existingIds.has(id) ? id : `ai-${ts}-${id}`);
+      });
+      (data.texts || []).forEach((t, i) => {
+        const id = t.id ?? `text-${i}`;
+        idMap.set(id, existingIds.has(id) ? id : `ai-${ts}-${id}`);
+      });
+
       const diagramNodes: CanvasNode[] = data.nodes.map((n, i) => {
+        const id = n.id ?? `node-${i}`;
         const def = NODE_TYPE_DEFINITIONS[n.nodeTypeId];
         const type = (def?.componentType || "infra") as "infra" | "flowchart";
         return {
-          id: `ai-${ts}-${n.id || i}`,
+          id: idMap.get(id)!,
           type,
           position: n.position,
           data: { nodeTypeId: n.nodeTypeId, label: n.label, ...(n.color ? { color: n.color } : {}) },
         } as CanvasNode;
       });
 
-      const textNodes: CanvasNode[] = (data.texts || []).map((t, i) => ({
-        id: `ai-${ts}-${t.id || `text-${i}`}`,
-        type: "text" as const,
-        position: t.position,
-        data: {
-          content: t.content,
-          ...(t.width ? { width: t.width } : {}),
-          ...(t.height ? { height: t.height } : {}),
-        },
-      }));
-
-      const newNodes = [...diagramNodes, ...textNodes];
-
-      const idMap = new Map<string, string>();
-      data.nodes.forEach((n, i) => idMap.set(n.id, `ai-${ts}-${n.id || i}`));
-      (data.texts || []).forEach((t, i) => idMap.set(t.id, `ai-${ts}-${t.id || `text-${i}`}`));
+      const textNodes: CanvasNode[] = (data.texts || []).map((t, i) => {
+        const id = t.id ?? `text-${i}`;
+        return {
+          id: idMap.get(id)!,
+          type: "text" as const,
+          position: t.position,
+          data: {
+            content: t.content,
+            ...(t.width ? { width: t.width } : {}),
+            ...(t.height ? { height: t.height } : {}),
+          },
+        };
+      });
 
       const newEdges: Edge[] = data.edges.map((e, i) => ({
         id: `ai-edge-${ts}-${e.id || i}`,
-        source: idMap.get(e.source) || e.source,
-        target: idMap.get(e.target) || e.target,
+        source: idMap.get(e.source) ?? e.source,
+        target: idMap.get(e.target) ?? e.target,
         sourceHandle: e.sourceHandle,
         targetHandle: e.targetHandle,
         type: "default",
@@ -773,12 +799,31 @@ export function InfraCanvas() {
       }));
 
       if (mode === "replace") {
+        const newNodes = [...diagramNodes, ...textNodes];
         targetSetNodes(newNodes);
         targetSetEdges(newEdges);
         pushToHistory(newNodes, newEdges);
       } else {
-        const mergedNodes = [...currentNodes, ...newNodes];
-        const mergedEdges = [...currentEdges, ...newEdges];
+        const mergedNodes = [...currentNodes];
+        for (const n of diagramNodes) {
+          const existingIndex = mergedNodes.findIndex((x) => x.id === n.id);
+          if (existingIndex >= 0) mergedNodes[existingIndex] = n;
+          else mergedNodes.push(n);
+        }
+        for (const t of textNodes) {
+          const existingIndex = mergedNodes.findIndex((x) => x.id === t.id);
+          if (existingIndex >= 0) mergedNodes[existingIndex] = t;
+          else mergedNodes.push(t);
+        }
+        const edgeKey = (e: Edge) => `${e.source}\t${e.target}`;
+        const existingEdgeKeys = new Set(currentEdges.map(edgeKey));
+        const mergedEdges = [...currentEdges];
+        for (const e of newEdges) {
+          if (!existingEdgeKeys.has(edgeKey(e))) {
+            existingEdgeKeys.add(edgeKey(e));
+            mergedEdges.push(e);
+          }
+        }
         targetSetNodes(mergedNodes);
         targetSetEdges(mergedEdges);
         pushToHistory(mergedNodes, mergedEdges);
@@ -893,7 +938,7 @@ export function InfraCanvas() {
               onNodeDoubleClick={handleNodeDoubleClick}
             />
           </ReactFlowProvider>
-          <AIPanel viewMode={viewMode} onApplyDiagram={handleApplyDiagram} />
+          <AIPanel viewMode={viewMode} onApplyDiagram={handleApplyDiagram} currentDiagram={currentDiagram} />
           <ShortcutTips />
         </main>
         {selectedEdge ? (

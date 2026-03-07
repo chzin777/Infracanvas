@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { Sparkles, Send, X, Loader2, Plus } from "lucide-react";
+import { Sparkles, Send, X, Loader2, Plus, Paperclip } from "lucide-react";
 import type { ViewMode } from "./nodes/nodeTypes";
 
 interface AIMessage {
@@ -65,6 +65,29 @@ function removeJsonBlock(text: string): string {
   return text.replace(/```json[\s\S]*?```/g, "").trim();
 }
 
+const ACCEPT_ATTACHMENTS = ".pdf,.html";
+const MAX_ATTACHMENT_MB = 5;
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") {
+        const base64 = result.includes(",") ? result.split(",")[1]! : result;
+        resolve(base64);
+      } else if (result instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(result);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+        resolve(btoa(binary));
+      } else reject(new Error("Unexpected read result"));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 const SUGGESTIONS = [
   "Crie uma topologia de rede corporativa com firewall, switches e servidores redundantes",
   "Monte um data center com DMZ, conexões bidirecionais e alta disponibilidade",
@@ -72,20 +95,30 @@ const SUGGESTIONS = [
   "Crie uma topologia em estrela com um switch core e 6 dispositivos",
 ];
 
+/** Snapshot do canvas atual para a IA editar / adicionar links (envia nós e edges no request). */
+export interface CurrentDiagramSnapshot {
+  nodes: Array<{ id: string; label?: string; nodeTypeId?: string; position: { x: number; y: number }; type?: string }>;
+  edges: Array<{ id: string; source: string; target: string; direction?: string }>;
+}
+
 interface AIPanelProps {
   viewMode: ViewMode;
   onApplyDiagram: (data: DiagramData, mode: "replace" | "append") => void;
+  /** Estado atual do diagrama (nós e edges) para a IA poder editar nós e adicionar conexões. */
+  currentDiagram?: CurrentDiagramSnapshot | null;
 }
 
-export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
+export function AIPanel({ viewMode, onApplyDiagram, currentDiagram }: AIPanelProps) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -104,7 +137,7 @@ export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
   useEffect(() => {
     if (!open) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      if (panelRef.current && !panelRef.current.contains(e.target as HTMLElement)) {
         setOpen(false);
       }
     };
@@ -115,14 +148,37 @@ export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
   const sendMessage = useCallback(
     async (overrideInput?: string) => {
       const text = (overrideInput ?? input).trim();
-      if (!text || loading) return;
+      const hasAttachments = attachments.length > 0;
+      if ((!text && !hasAttachments) || loading) return;
 
-      const userMessage: AIMessage = { role: "user", content: text };
+      const userContent = text || "Gere um fluxograma (ou diagrama) com base no(s) documento(s) anexado(s).";
+      const userMessage: AIMessage = { role: "user", content: userContent };
       const newMessages = [...messages, userMessage];
       setMessages(newMessages);
       setInput("");
       setLoading(true);
       setStreamingContent("");
+
+      let attachmentsPayload: { type: "pdf" | "html"; name: string; content: string }[] = [];
+      if (hasAttachments) {
+        try {
+          attachmentsPayload = await Promise.all(
+            attachments.map(async (file) => {
+              const base64 = await fileToBase64(file);
+              const type = file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "html";
+              return { type, name: file.name, content: base64 };
+            })
+          );
+          setAttachments([]);
+        } catch (e) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: `Erro ao ler anexo(s): ${e instanceof Error ? e.message : String(e)}` },
+          ]);
+          setLoading(false);
+          return;
+        }
+      }
 
       try {
         const res = await fetch("/api/ai", {
@@ -134,6 +190,8 @@ export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
               content: m.content,
             })),
             viewMode,
+            currentDiagram: currentDiagram ?? undefined,
+            attachments: attachmentsPayload.length ? attachmentsPayload : undefined,
           }),
         });
 
@@ -191,7 +249,7 @@ export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
         setLoading(false);
       }
     },
-    [input, loading, messages, viewMode]
+    [input, loading, messages, viewMode, currentDiagram, attachments]
   );
 
   const handleKeyDown = useCallback(
@@ -392,16 +450,65 @@ export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
 
           {/* Input */}
           <div className="px-3 pb-3 pt-1">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {attachments.map((file, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-700/80
+                      text-xs text-slate-200 border border-slate-600"
+                  >
+                    {file.name}
+                    <button
+                      type="button"
+                      onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                      className="p-0.5 rounded hover:bg-slate-600 text-slate-400 hover:text-slate-100 cursor-pointer"
+                      aria-label="Remover anexo"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div
               className="flex items-end gap-2 bg-slate-800/80 border border-slate-700/60
                 rounded-xl px-3 py-2 focus-within:border-primary/50 transition-colors"
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT_ATTACHMENTS}
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  const valid = files.filter((f) => {
+                    const ok = f.size <= MAX_ATTACHMENT_MB * 1024 * 1024;
+                    const isPdf = f.name.toLowerCase().endsWith(".pdf");
+                    const isHtml = f.name.toLowerCase().endsWith(".html") || f.name.toLowerCase().endsWith(".htm");
+                    return ok && (isPdf || isHtml);
+                  });
+                  setAttachments((prev) => [...prev, ...valid]);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="p-1.5 rounded-lg hover:bg-slate-700/80 text-slate-400 hover:text-slate-200
+                  disabled:opacity-50 shrink-0 cursor-pointer"
+                title="Anexar PDF ou HTML (até 5 MB)"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={handleTextareaInput}
                 onKeyDown={handleKeyDown}
-                placeholder="Descreva o diagrama..."
+                placeholder={attachments.length ? "Descreva o que deseja (opcional) ou envie..." : "Descreva o diagrama ou anexe PDF/HTML..."}
                 rows={1}
                 className="flex-1 bg-transparent text-sm text-slate-100 placeholder-slate-500
                   resize-none outline-none"
@@ -410,7 +517,7 @@ export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
               />
               <button
                 onClick={() => sendMessage()}
-                disabled={!input.trim() || loading}
+                disabled={(!input.trim() && !attachments.length) || loading}
                 className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/90
                   hover:bg-primary disabled:opacity-30 disabled:cursor-not-allowed
                   text-white transition-all shrink-0 cursor-pointer"
@@ -422,6 +529,7 @@ export function AIPanel({ viewMode, onApplyDiagram }: AIPanelProps) {
                 )}
               </button>
             </div>
+            <p className="text-[10px] text-slate-500 mt-1">PDF e HTML até {MAX_ATTACHMENT_MB} MB para gerar fluxograma a partir do conteúdo.</p>
           </div>
         </div>
       )}
