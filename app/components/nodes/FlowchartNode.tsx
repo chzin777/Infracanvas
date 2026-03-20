@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState, useCallback, useRef, useEffect } from "react";
-import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { Handle, Position, useReactFlow, type Node, type NodeProps } from "@xyflow/react";
 
 export const DEFAULT_FC_COLOR = "#6366f1";
 
@@ -106,7 +106,8 @@ const LABEL_PADDING_X = 32;
 const LINE_HEIGHT = 20;
 const LABEL_PADDING_Y = 24;
 
-function FlowchartNodeComponent({ data, selected }: NodeProps<FlowchartNodeType>) {
+function FlowchartNodeComponent({ id, data, selected }: NodeProps<FlowchartNodeType>) {
+  const { setNodes } = useReactFlow<FlowchartNodeType>();
   const shape = data.nodeTypeId || "fc-process";
   const label = data.label ?? "Processo";
   const color = data.color ?? DEFAULT_FC_COLOR;
@@ -143,6 +144,18 @@ function FlowchartNodeComponent({ data, selected }: NodeProps<FlowchartNodeType>
     el.style.height = "auto";
     el.style.height = `${Math.max(el.scrollHeight, 24)}px`;
   }, []);
+
+  const commitLabel = useCallback((nextLabel: string) => {
+    const trimmed = nextLabel.trim();
+    if (!trimmed || trimmed === label) return;
+    setNodes((nodes) =>
+      nodes.map((n) =>
+        n.id === id && n.type === "flowchart"
+          ? { ...n, data: { ...n.data, label: trimmed } }
+          : n
+      )
+    );
+  }, [id, label, setNodes]);
 
   useEffect(() => {
     if (!editing) return;
@@ -187,13 +200,7 @@ function FlowchartNodeComponent({ data, selected }: NodeProps<FlowchartNodeType>
             onInput={adjustEditHeight}
             onBlur={(e) => {
               setEditing(false);
-              const newLabel = e.target.value.trim();
-              if (newLabel && newLabel !== label) {
-                e.target.dispatchEvent(new CustomEvent("fc-label-change", {
-                  bubbles: true,
-                  detail: { nodeId: data.nodeTypeId, label: newLabel },
-                }));
-              }
+              commitLabel(e.target.value);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLTextAreaElement).blur();
