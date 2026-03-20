@@ -407,7 +407,7 @@ type HistoryEntry = {
 export function InfraCanvas() {
   const [viewMode, setViewMode] = useState<ViewMode>("physical");
   const [viewport, setViewport] = useState<Viewport>(defaultViewport);
-  const [selectedNode, setSelectedNode] = useState<CanvasNode | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [physicalNodes, setPhysicalNodes] = useNodesState<CanvasNode>([]);
   const [physicalEdges, setPhysicalEdges] = useEdgesState<Edge>([]);
@@ -437,7 +437,7 @@ export function InfraCanvas() {
     setPhysicalHistoryIndex(0);
     setLogicalHistory([{ nodes: data.logicalNodes, edges: data.logicalEdges }]);
     setLogicalHistoryIndex(0);
-    setSelectedNode(null);
+    setSelectedNodeId(null);
     setSelectedEdge(null);
     setFocusNodeId(null);
   }, [setPhysicalNodes, setPhysicalEdges, setLogicalNodes, setLogicalEdges]);
@@ -544,6 +544,10 @@ export function InfraCanvas() {
 
   const nodes = viewMode === "physical" ? physicalNodes : logicalNodes;
   const edges = viewMode === "physical" ? physicalEdges : logicalEdges;
+  const selectedNode = useMemo(
+    () => (selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) ?? null : null),
+    [nodes, selectedNodeId]
+  );
 
   const FOCUS_DIMMED_OPACITY = 0.25;
 
@@ -642,7 +646,7 @@ export function InfraCanvas() {
       }
       const selected = newEdges.find((e) => e.selected) ?? null;
       setSelectedEdge(selected);
-      if (selected) setSelectedNode(null);
+      if (selected) setSelectedNodeId(null);
       // Only save to history for meaningful changes
       const hasRemoveChange = changes.some(c => c.type === 'remove');
       const hasAddChange = changes.some(c => c.type === 'add');
@@ -655,10 +659,10 @@ export function InfraCanvas() {
 
   const handleSelectionChange = useCallback(
     (selectedNodes: CanvasNode[], selectedEdges: Edge[]) => {
-      setSelectedNode(selectedNodes.length > 0 ? selectedNodes[0] : null);
+      setSelectedNodeId(selectedNodes.length > 0 ? selectedNodes[0]!.id : null);
       if (selectedEdges.length > 0) {
         setSelectedEdge(selectedEdges[0]);
-        setSelectedNode(null);
+        setSelectedNodeId(null);
         setFocusNodeId(null);
       } else if (selectedNodes.length > 0) {
         setSelectedEdge(null);
@@ -703,11 +707,6 @@ export function InfraCanvas() {
           : n
       ) as CanvasNode[];
       setNodes(newNodes);
-      setSelectedNode((prev) =>
-        prev && prev.id === nodeId && (prev.type === "infra" || prev.type === "flowchart")
-          ? { ...prev, data: { ...prev.data, label } }
-          : prev
-      );
       pushToHistory(newNodes, edges);
     },
     [nodes, edges, setNodes, pushToHistory]
@@ -729,7 +728,7 @@ export function InfraCanvas() {
       const newEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
       setNodes(newNodes);
       setEdges(newEdges);
-      setSelectedNode(null);
+      setSelectedNodeId(null);
       pushToHistory(newNodes, newEdges);
     },
     [nodes, edges, setNodes, setEdges, pushToHistory]
@@ -746,11 +745,6 @@ export function InfraCanvas() {
         pushToHistory(next, edges);
         return next;
       });
-      setSelectedNode((prev) =>
-        prev && prev.id === nodeId && prev.type === "text"
-          ? { ...prev, data: { ...prev.data, content } }
-          : prev
-      );
     },
     [edges, setNodes, pushToHistory]
   );
@@ -763,11 +757,6 @@ export function InfraCanvas() {
           : n
       ) as CanvasNode[];
       setNodes(newNodes);
-      setSelectedNode((prev) =>
-        prev && prev.id === nodeId && (prev.type === "infra" || prev.type === "flowchart")
-          ? { ...prev, data: { ...prev.data, color } }
-          : prev
-      );
       pushToHistory(newNodes, edges);
     },
     [nodes, edges, setNodes, pushToHistory]
@@ -783,11 +772,6 @@ export function InfraCanvas() {
         pushToHistory(newNodes, edges);
         return newNodes;
       });
-      setSelectedNode((prev) =>
-        prev && prev.id === nodeId && prev.type === "infra"
-          ? { ...prev, data: { ...prev.data, autoScale } }
-          : prev
-      );
     },
     [edges, pushToHistory]
   );
@@ -801,11 +785,6 @@ export function InfraCanvas() {
         pushToHistory(newNodes, edges);
         return newNodes;
       });
-      setSelectedNode((prev) =>
-        prev && prev.id === nodeId && prev.type === "infra"
-          ? { ...prev, data: { ...prev.data, iframeUrl: url } }
-          : prev
-      );
     },
     [edges, pushToHistory]
   );
@@ -823,11 +802,6 @@ export function InfraCanvas() {
         pushToHistory(newNodes, edges);
         return newNodes;
       });
-      setSelectedNode((prev) =>
-        prev && prev.id === nodeId
-          ? ({ ...prev, data: { ...prev.data, ...size } } as CanvasNode)
-          : prev
-      );
     },
     [edges, pushToHistory]
   );
