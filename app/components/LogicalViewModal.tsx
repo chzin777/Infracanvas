@@ -220,6 +220,12 @@ function normalizeUrl(url: string): string {
   return `http://${url}`;
 }
 
+/** Roteia a URL pelo proxy local para evitar bloqueio de X-Frame-Options / CSP */
+function proxyUrl(url: string): string {
+  const final = normalizeUrl(url);
+  return `/api/iframe-proxy?url=${encodeURIComponent(final)}`;
+}
+
 export function LogicalViewModal({
   nodeId,
   nodeLabel,
@@ -323,10 +329,11 @@ export function LogicalViewModal({
               <div className="flex-1 bg-slate-900">
                 {iframeUrl ? (
                   <iframe
-                    src={normalizeUrl(iframeUrl)}
+                    src={proxyUrl(iframeUrl)}
                     title={`Visão de ${nodeLabel}`}
                     className="w-full h-full border-0"
                     allowFullScreen
+                    referrerPolicy="no-referrer"
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-slate-600">

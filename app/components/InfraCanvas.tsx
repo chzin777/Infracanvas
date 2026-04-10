@@ -28,6 +28,7 @@ import type { InfraNodeData } from "./nodes/InfraNode";
 import { InfraNode } from "./nodes/InfraNode";
 import type { TextNodeData } from "./nodes/TextNode";
 import { TextNode } from "./nodes/TextNode";
+import { ImageNode } from "./nodes/ImageNode";
 import type { CanvasNode } from "./canvasTypes";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
@@ -44,7 +45,7 @@ import { useProjectStorage, type ProjectData, type ProjectMeta } from "./useProj
 import { AIPanel, type DiagramData, type CurrentDiagramSnapshot } from "./AIPanel";
 import { ShortcutTips } from "./ShortcutTips";
 
-const nodeTypes = { infra: InfraNode, text: TextNode, flowchart: FlowchartNode };
+const nodeTypes = { infra: InfraNode, text: TextNode, flowchart: FlowchartNode, image: ImageNode };
 const edgeTypes = { default: DirectionalEdge, bidirectional: DirectionalEdge };
 
 function FlowWithDrop({
@@ -141,6 +142,30 @@ function FlowWithDrop({
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
+
+      // Imagem arrastada do explorador de arquivos
+      const imageFile = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/"));
+      if (imageFile) {
+        const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          const newNode: CanvasNode = {
+            id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            type: "image",
+            position,
+            data: { src: dataUrl },
+          } as CanvasNode;
+          setNodes((prev) => {
+            const next = [...prev, newNode];
+            pushToHistory(next, initialEdges);
+            return next;
+          });
+        };
+        reader.readAsDataURL(imageFile);
+        return;
+      }
+
       const raw = e.dataTransfer.getData("application/reactflow-node");
       if (!raw) return;
       try {
@@ -208,6 +233,38 @@ function FlowWithDrop({
     setNodes(newNodes);
     pushToHistory(newNodes, initialEdges);
   }, [getViewport, width, height, defaultNodeType, setNodes, initialNodes, initialEdges, pushToHistory]);
+
+  const handleAddImage = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const vp = getViewport();
+        const position = {
+          x: (-vp.x + width / 2) / vp.zoom - 100,
+          y: (-vp.y + height / 2) / vp.zoom - 100,
+        };
+        const newNode: CanvasNode = {
+          id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          type: "image",
+          position,
+          data: { src: dataUrl },
+        } as CanvasNode;
+        setNodes((prev) => {
+          const next = [...prev, newNode];
+          pushToHistory(next, initialEdges);
+          return next;
+        });
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  }, [getViewport, width, height, setNodes, initialEdges, pushToHistory]);
 
   const handleFitView = useCallback(() => {
     fitView({ padding: 0.2, duration: 200 });
@@ -292,6 +349,7 @@ function FlowWithDrop({
             tool={tool}
             onToolChange={setTool}
             onAddNode={handleAddNode}
+            onAddImage={handleAddImage}
             onFitView={handleFitView}
             connectionBidirectional={connectionBidirectional}
             onConnectionBidirectionalChange={setConnectionBidirectional}

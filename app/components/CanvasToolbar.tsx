@@ -6,6 +6,7 @@ interface CanvasToolbarProps {
   tool: CanvasTool;
   onToolChange: (tool: CanvasTool) => void;
   onAddNode: () => void;
+  onAddImage: () => void;
   onFitView: () => void;
   /** Quando true, novas conexões são tracejadas e bidirecionais (setas nas duas pontas) */
   connectionBidirectional?: boolean;
@@ -19,6 +20,7 @@ export function CanvasToolbar({
   tool,
   onToolChange,
   onAddNode,
+  onAddImage,
   onFitView,
   connectionBidirectional = false,
   onConnectionBidirectionalChange,
@@ -58,6 +60,15 @@ export function CanvasToolbar({
         title="Adicionar nó no centro do canvas"
       >
         <span className="material-symbols-outlined">add_box</span>
+      </button>
+      <button
+        type="button"
+        onClick={onAddImage}
+        className="p-1 hover:text-primary transition-colors rounded"
+        aria-label="Adicionar imagem"
+        title="Adicionar imagem ao canvas"
+      >
+        <span className="material-symbols-outlined">image</span>
       </button>
       <button
         type="button"
